@@ -1,0 +1,35 @@
+<div id="web-search-extension-root" class="web-search-extension" data-extension-id="web-search-extension">
+  <div class="inline-drawer">
+    <div class="inline-drawer-toggle inline-drawer-header">
+      <b>{{displayName}}</b>
+      <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+    </div>
+    <div class="inline-drawer-content">
+      <p class="web-search-extension__host">当前环境：<span data-host>{{hostLabel}}</span></p>
+      <label class="checkbox_label"><input id="web-search-extension-enabled" type="checkbox"><span>启用插件</span></label>
+      <label>什么时候搜索
+        <select id="web-search-extension-mode" class="text_pole">
+          <option value="smart">智能判断（推荐，不用打指令）</option>
+          <option value="keyword">只在有关键词时搜</option>
+          <option value="always">每轮都搜</option>
+        </select>
+      </label>
+      <label>普通触发词（逗号分隔）<input id="web-search-extension-keywords" class="text_pole" type="text"></label>
+      <label>同人/不可原创（命中就搜）<input id="web-search-extension-force" class="text_pole" type="text"></label>
+      <label>原创/架空（命中就不搜）<input id="web-search-extension-skip" class="text_pole" type="text"></label>
+      <label class="checkbox_label"><input id="web-search-extension-ai-request" type="checkbox"><span>生成正文前先让 AI 判断要不要搜（同人不能原创时会先搜再写）</span></label>
+      <label class="checkbox_label"><input id="web-search-extension-wiki-zh" type="checkbox"><span>维基百科中文（适合跨域）</span></label>
+      <label class="checkbox_label"><input id="web-search-extension-wiki-en" type="checkbox"><span>Wikipedia 英文（适合跨域）</span></label>
+      <label class="checkbox_label"><input id="web-search-extension-ddg" type="checkbox"><span>DuckDuckGo 即时答案（可能被跨域拦住）</span></label>
+      <label>自定义搜索地址（把关键词写成两个大括号包住 query）<input id="web-search-extension-custom" class="text_pole" type="text" placeholder="https://example.com/search?q=QUERY"></label>
+      <label>Tavily API Key（可选，密钥只保存在本机扩展设置里）<input id="web-search-extension-tavily" class="text_pole" type="password" autocomplete="off"></label>
+      <label>最多引用条数<input id="web-search-extension-max" class="text_pole" type="number" min="1" max="12"></label>
+      <div class="web-search-extension__row">
+        <input id="web-search-extension-test-query" class="text_pole" type="text" placeholder="试搜关键词">
+        <button id="web-search-extension-test" class="menu_button" type="button">试搜</button>
+      </div>
+      <pre id="web-search-extension-status" class="web-search-extension__status">尚未试搜。文件检查不等于已经装进酒馆。</pre>
+      <p class="web-search-extension__hint">检索发生在正文出现之前。同人/不能原创时会先安静判断、先搜索，再写故事。打开判断开关后，回复会稍慢。</p>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,33 @@
+[data-extension-id="web-search-extension"] {
+  contain: content;
+}
+
+.web-search-extension {
+  margin: 0.5rem 0;
+}
+
+.web-search-extension__host,
+.web-search-extension__hint {
+  opacity: 0.85;
+  line-height: 1.4;
+}
+
+.web-search-extension label {
+  display: block;
+  margin: 0.4rem 0;
+}
+
+.web-search-extension__row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.web-search-extension__status {
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  padding: 0.6rem;
+  border-radius: 0.4rem;
+}

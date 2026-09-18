@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "minimum": {
+    "sillytavern": "1.18.0",
+    "tavernHelper": null
+  },
+  "requirements": [
+    {
+      "id": "host-context",
+      "owner": "sillytavern",
+      "symbol": "SillyTavern.getContext",
+      "required": true,
+      "fallback": null
+    },
+    {
+      "id": "set-extension-prompt",
+      "owner": "sillytavern",
+      "symbol": "SillyTavern.getContext().setExtensionPrompt",
+      "required": true,
+      "fallback": null
+    },
+    {
+      "id": "slash-command-parser",
+      "owner": "sillytavern",
+      "symbol": "SillyTavern.getContext().SlashCommandParser",
+      "required": false,
+      "fallback": "斜杠命令 /websearch 不注册，仍可用关键词触发和设置页试搜"
+    },
+    {
+      "id": "tauritavern-global",
+      "owner": "provider",
+      "symbol": "window.__TAURITAVERN__",
+      "required": false,
+      "fallback": "按浏览器 SillyTavern 处理；设置页显示 SillyTavern"
+    }
+  ]
+}
