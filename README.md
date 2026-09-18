@@ -29,7 +29,7 @@ SillyTavern / TauriTavern 通用前端扩展。不绑角色卡，不改「足球
 - **不支持** Node 后端插件；本扩展本来就是纯前端，这一点是对齐的。
 - 跨域限制仍和浏览器酒馆同类：维基百科比较稳，DuckDuckGo / Tavily 可能被拦。
 
-### 还没上传时
+### 也可以手动复制
 
 把整个 `web-search-extension` 文件夹复制到：
 
@@ -41,7 +41,7 @@ SillyTavern / TauriTavern 通用前端扩展。不绑角色卡，不改「足球
 
 - 仓库名建议就叫 `web-search-extension`，根目录直接放 `manifest.json`，不要再套一层文件夹。
 - 公开仓库才能让别人用「粘贴地址」安装。
-- 进官方扩展目录还要有清晰开源许可证、完整 README，并且**不能依赖 Server Plugin**。本扩展满足最后一条；许可证需要你自己选（常见是 MIT）。没选之前我不会擅自加 LICENSE。
+- 许可证是 MIT：可以玩、可以改、可以二创，保留署名即可。本扩展不依赖 Server Plugin。
 - 仓库地址：https://github.com/xiaoyu719/web-search-extension
 - 密钥只存在本机扩展设置，不要写进仓库。
 
