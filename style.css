@@ -31,3 +31,18 @@
   padding: 0.6rem;
   border-radius: 0.4rem;
 }
+
+.web-search-extension__panel {
+  display: block;
+  margin: 0.4rem 0 0.8rem;
+}
+
+.web-search-extension__panel > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.35rem 0;
+}
+
+.web-search-extension__body {
+  display: block;
+}

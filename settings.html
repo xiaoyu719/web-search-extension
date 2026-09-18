@@ -1,10 +1,7 @@
 <div id="web-search-extension-root" class="web-search-extension" data-extension-id="web-search-extension">
-  <div class="inline-drawer">
-    <div class="inline-drawer-toggle inline-drawer-header">
-      <b>{{displayName}}</b>
-      <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-    </div>
-    <div class="inline-drawer-content">
+  <details open class="web-search-extension__panel">
+    <summary><b>{{displayName}}</b></summary>
+    <div class="web-search-extension__body">
       <p class="web-search-extension__host">当前环境：<span data-host>{{hostLabel}}</span></p>
       <label class="checkbox_label"><input id="web-search-extension-enabled" type="checkbox"><span>启用插件</span></label>
       <label>什么时候搜索
@@ -31,5 +28,5 @@
       <pre id="web-search-extension-status" class="web-search-extension__status">尚未试搜。文件检查不等于已经装进酒馆。</pre>
       <p class="web-search-extension__hint">检索发生在正文出现之前。同人/不能原创时会先安静判断、先搜索，再写故事。打开判断开关后，回复会稍慢。</p>
     </div>
-  </div>
+  </details>
 </div>

@@ -508,12 +508,9 @@ async function interceptGeneration(chat, _contextSize, _abort, type) {
 function fallbackSettingsHtml(hostLabel) {
     return [
         '<div id="web-search-extension-root" class="web-search-extension" data-extension-id="web-search-extension">',
-        '  <div class="inline-drawer">',
-        '    <div class="inline-drawer-toggle inline-drawer-header">',
-        '      <b>联网搜索</b>',
-        '      <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>',
-        '    </div>',
-        '    <div class="inline-drawer-content">',
+        '  <details open class="web-search-extension__panel">',
+        '    <summary><b>联网搜索</b></summary>',
+        '    <div class="web-search-extension__body">',
         '      <p class="web-search-extension__host">当前环境：<span data-host>' + hostLabel + '</span></p>',
         '      <label class="checkbox_label"><input id="web-search-extension-enabled" type="checkbox"><span>启用插件</span></label>',
         '      <label>什么时候搜索<select id="web-search-extension-mode" class="text_pole"><option value="smart">智能判断（推荐，不用打指令）</option><option value="keyword">只在有关键词时搜</option><option value="always">每轮都搜</option></select></label>',
@@ -534,7 +531,7 @@ function fallbackSettingsHtml(hostLabel) {
         '      <pre id="web-search-extension-status" class="web-search-extension__status">尚未试搜。文件检查不等于已经装进酒馆。</pre>',
         '      <p class="web-search-extension__hint">检索发生在正文出现之前。同人/不能原创时会先安静判断、先搜索，再写故事。打开上面的判断开关后，回复会稍慢一轮。</p>',
         '    </div>',
-        '  </div>',
+        '  </details>',
         '</div>',
     ].join("\n");
 }
@@ -607,8 +604,10 @@ async function mountSettings() {
         html = fallbackSettingsHtml(hostLabel);
     }
 
-    const panel = document.querySelector("#extensions_settings2") || document.querySelector("#extensions_settings");
-    if (!panel) return;
+    const panel = document.querySelector("#extensions_settings2")
+        || document.querySelector("#extensions_settings")
+        || document.querySelector("#extensions_settings1");
+    if (!panel) return false;
 
     cleanupUi();
     const wrapper = document.createElement("div");
@@ -656,6 +655,7 @@ async function mountSettings() {
         uiRoot = null;
         uiCleanup = null;
     };
+    return true;
 }
 
 function cleanupUi() {
@@ -675,9 +675,10 @@ function registerSlashCommand() {
         console.warn("[" + MODULE_ID + "] slash command API missing; /websearch not registered");
         return;
     }
+    try {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: "websearch",
-        aliases: ["联网搜索"],
+        aliases: ["ws"],
         returns: "search summary",
         helpString: "立刻联网搜索，并把摘要注入下一轮 AI 提示词。",
         unnamedArgumentList: SlashCommandArgument?.fromProps ? [
@@ -701,34 +702,50 @@ function registerSlashCommand() {
         },
     }));
     slashRegistered = true;
+    } catch (error) {
+        console.warn("[" + MODULE_ID + "] slash command register failed", error);
+    }
+}
+
+function settingsPanelReady() {
+    return Boolean(uiRoot && document.body.contains(uiRoot));
 }
 
 async function initOnce() {
-    if (initialized) return;
+    if (settingsPanelReady()) return;
     const context = tryGetContext();
-    if (!context) return;
-    initialized = true;
+    if (!context) {
+        window.setTimeout(() => { void initOnce(); }, 400);
+        return;
+    }
     initializeSettings();
     registerSlashCommand();
     try {
         await mountSettings();
     } catch (error) {
         console.warn("[" + MODULE_ID + "] settings mount failed", error);
-        initialized = false;
+    }
+    if (!settingsPanelReady()) {
+        window.setTimeout(() => { void initOnce(); }, 400);
     }
 }
 
 function scheduleBoot() {
     const start = () => { void initOnce(); };
     const context = tryGetContext();
-    if (context?.eventSource && context.event_types?.APP_READY) {
-        context.eventSource.once(context.event_types.APP_READY, start);
+    if (context?.eventSource && context.event_types) {
+        const types = context.event_types;
+        if (types.APP_READY) context.eventSource.on(types.APP_READY, start);
+        if (types.EXTENSION_SETTINGS_LOADED) context.eventSource.on(types.EXTENSION_SETTINGS_LOADED, start);
+        if (types.SETTINGS_LOADED) context.eventSource.on(types.SETTINGS_LOADED, start);
     }
     if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", start, { once: true });
     } else {
         start();
     }
+    window.setTimeout(start, 800);
+    window.setTimeout(start, 2500);
 }
 
 export function onInstall() {
