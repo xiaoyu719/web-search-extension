@@ -22,11 +22,15 @@ const DEFAULT_SETTINGS = Object.freeze({
     customSearchUrl: "",
     tavilyApiKey: "",
     sourceMode: "auto",
+    writeToDatabase: true,
+    databaseTable: "\u68c0\u7d22\u8865\u5145",
+    databaseColumn: "\u8865\u5145\u680f",
     maxItems: 6,
 });
 
 const searchCache = { chatId: "", query: "", text: "" };
 let initialized = false;
+let lastDatabaseWriteStatus = "";
 let slashRegistered = false;
 let uiRoot = null;
 let uiCleanup = null;
@@ -602,6 +606,80 @@ async function runSearch(query, settings) {
 }
 
 
+
+function getDatabaseApi() {
+    const hosts = [globalThis, globalThis.window, globalThis.parent];
+    for (const host of hosts) {
+        const api = host?.AutoCardUpdaterAPI;
+        if (api && typeof api.insertRow === "function" && typeof api.exportTableAsJson === "function") return api;
+    }
+    return null;
+}
+
+function findSheetByName(tableData, tableName) {
+    const wanted = String(tableName || "").trim();
+    if (!wanted || !tableData || typeof tableData !== "object") return null;
+    for (const value of Object.values(tableData)) {
+        if (value && typeof value === "object" && String(value.name || "").trim() === wanted) return value;
+    }
+    return null;
+}
+
+function pickHeader(headers, aliases) {
+    const list = Array.isArray(headers) ? headers.map((item) => String(item || "").trim()) : [];
+    for (const alias of aliases) {
+        const found = list.find((header) => header === alias);
+        if (found) return found;
+    }
+    return "";
+}
+
+function buildDatabaseRow(headers, query, text, settings) {
+    const extraName = pickHeader(headers, [
+        String(settings.databaseColumn || "").trim(),
+        "\u8865\u5145\u680f",
+        "\u8865\u5145",
+        "\u5907\u6ce8",
+        "\u6458\u8981",
+        "\u5185\u5bb9",
+    ].filter(Boolean));
+    const queryName = pickHeader(headers, ["\u68c0\u7d22\u8bcd", "\u5173\u952e\u8bcd", "\u67e5\u8be2", "\u6807\u9898"]);
+    const sourceName = pickHeader(headers, ["\u6765\u6e90"]);
+    const timeName = pickHeader(headers, ["\u65f6\u95f4", "\u66f4\u65b0\u65f6\u95f4"]);
+    if (!extraName) return null;
+    const row = {};
+    row[extraName] = clipLine(text, 300);
+    if (queryName) row[queryName] = clipLine(query, 80);
+    if (sourceName) row[sourceName] = "\u8054\u7f51\u641c\u7d22";
+    if (timeName) row[timeName] = new Date().toISOString().slice(0, 16).replace("T", " ");
+    return row;
+}
+
+async function writeSearchToDatabase(query, text, settings) {
+    if (settings.writeToDatabase === false) return "skip";
+    const summary = String(text || "");
+    if (!summary || summary.indexOf("\u6ca1\u6709\u62ff\u5230\u53ef\u7528\u6458\u8981") >= 0) return "empty";
+    const api = getDatabaseApi();
+    if (!api) return "no-api";
+    let tableData = {};
+    try {
+        tableData = typeof structuredClone === "function"
+            ? structuredClone(api.exportTableAsJson() ?? {})
+            : JSON.parse(JSON.stringify(api.exportTableAsJson() ?? {}));
+    } catch {
+        return "unready";
+    }
+    const tableName = String(settings.databaseTable || "\u68c0\u7d22\u8865\u5145").trim() || "\u68c0\u7d22\u8865\u5145";
+    const sheet = findSheetByName(tableData, tableName);
+    if (!sheet) return "no-table";
+    const headers = Array.isArray(sheet.content) ? sheet.content[0] : [];
+    const row = buildDatabaseRow(headers, query, summary, settings);
+    if (!row) return "no-column";
+    const index = await api.insertRow(tableName, row);
+    if (index === -1 || index === false || index == null) return "insert-failed";
+    return "ok";
+}
+
 function setPrompt(text) {
     const context = tryGetContext();
     if (typeof context?.setExtensionPrompt !== "function") return false;
@@ -675,6 +753,19 @@ async function interceptGeneration(chat, _contextSize, _abort, type) {
         searchCache.query = query;
         searchCache.text = text;
         setPrompt(buildPrompt(text, settings, false));
+        try {
+            const dbStatus = await writeSearchToDatabase(query, text, settings);
+            if (dbStatus !== "ok" && dbStatus !== "skip" && dbStatus !== "empty" && dbStatus !== "no-api") {
+                if (lastDatabaseWriteStatus !== dbStatus) {
+                    lastDatabaseWriteStatus = dbStatus;
+                    console.warn("[" + MODULE_ID + "] database write: " + dbStatus);
+                }
+            } else if (dbStatus === "ok") {
+                lastDatabaseWriteStatus = "ok";
+            }
+        } catch (error) {
+            console.warn("[" + MODULE_ID + "] database write failed", error);
+        }
     } catch (error) {
         console.warn("[" + MODULE_ID + "] intercept failed", error);
     }
@@ -702,6 +793,9 @@ function fallbackSettingsHtml(hostLabel) {
         '      <label class="checkbox_label"><input id="web-search-extension-ddg" type="checkbox"><span>DuckDuckGo 即时答案（海外，常被拦住）</span></label>',
         '      <label>自定义搜索地址（用 {{query}} 占位，可填自建 SearXNG/代理）<input id="web-search-extension-custom" class="text_pole" type="text" placeholder="https://example.com/search?q={{query}}"></label>',
         '      <label>Tavily API Key（可选，密钥只保存在本机扩展设置里）<input id="web-search-extension-tavily" class="text_pole" type="password" autocomplete="off"></label>',
+        '      <label class="checkbox_label"><input id="web-search-extension-db" type="checkbox"><span>写入神/数据库补充栏（没装就跳过）</span></label>',
+        '      <label>数据库表名<input id="web-search-extension-db-table" class="text_pole" type="text"></label>',
+        '      <label>补充栏列名<input id="web-search-extension-db-col" class="text_pole" type="text"></label>',
         '      <label>最多引用条数<input id="web-search-extension-max" class="text_pole" type="number" min="1" max="12"></label>',
         '      <div class="web-search-extension__row">',
         '        <input id="web-search-extension-test-query" class="text_pole" type="text" placeholder="试搜关键词">',
@@ -743,6 +837,9 @@ function fillSettingsForm(root, settings) {
     assign("#web-search-extension-custom", settings.customSearchUrl);
     assign("#web-search-extension-tavily", settings.tavilyApiKey);
     assign("#web-search-extension-max", settings.maxItems);
+    assign("#web-search-extension-db", settings.writeToDatabase !== false, true);
+    assign("#web-search-extension-db-table", settings.databaseTable || "检索补充");
+    assign("#web-search-extension-db-col", settings.databaseColumn || "补充栏");
     const host = root.querySelector("[data-host]");
     if (host) host.textContent = detectHost();
 }
@@ -778,6 +875,12 @@ function persistFromForm(root) {
     settings.customSearchUrl = String(read("#web-search-extension-custom") ?? "");
     settings.tavilyApiKey = String(read("#web-search-extension-tavily") ?? "");
     settings.maxItems = Math.max(1, Number(read("#web-search-extension-max")) || 6);
+    const writeDb = read("#web-search-extension-db", true);
+    if (writeDb !== null) settings.writeToDatabase = Boolean(writeDb);
+    const dbTable = read("#web-search-extension-db-table");
+    if (dbTable !== null) settings.databaseTable = String(dbTable || "检索补充");
+    const dbCol = read("#web-search-extension-db-col");
+    if (dbCol !== null) settings.databaseColumn = String(dbCol || "补充栏");
     tryGetContext()?.saveSettingsDebounced?.();
     if (!settings.enabled) clearPrompt();
 }
@@ -826,6 +929,9 @@ async function mountSettings() {
         "#web-search-extension-custom",
         "#web-search-extension-tavily",
         "#web-search-extension-max",
+        "#web-search-extension-db",
+        "#web-search-extension-db-table",
+        "#web-search-extension-db-col",
     ].forEach((selector) => bindField(uiRoot, selector, "change", onChange));
 
     bindField(uiRoot, "#web-search-extension-test", "click", async () => {
