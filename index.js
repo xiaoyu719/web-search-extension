@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     sourceMode: "auto",
     writeToWorldbook: true,
     worldbookName: "",
+    skipIfInWorldbook: true,
     maxItems: 6,
 });
 
@@ -735,6 +736,64 @@ function createOwnedSearchEntry(data, query, content) {
     return entry;
 }
 
+
+function wantsFreshSearch(userText, settings) {
+    const text = String(userText || "").trim();
+    if (!text) return false;
+    if (/^\/(?:websearch|联网搜索)\b/i.test(text)) return true;
+    if (hasKeyword(text, settings)) return true;
+    return /(今天|今日|昨天|今晚|本周|本月|本赛季|本轮|今年|目前|现在|实时|最新|刚刚|当前|比分|新闻)/.test(text);
+}
+
+function isUsefulWorldKey(value) {
+    const key = String(value || "").trim();
+    if (key.length < 2) return false;
+    if (/^[a-z0-9_\-]+$/i.test(key) && key.length < 3) return false;
+    return true;
+}
+
+function entryCoversText(entry, userText, query) {
+    if (!entry || entry.disable) return false;
+    const hay = (String(userText || "") + "\n" + String(query || "")).toLowerCase();
+    if (!hay.trim()) return false;
+    const comment = String(entry.comment || "");
+    if (comment.startsWith(WORLD_ENTRY_PREFIX)) {
+        const ownedQuery = comment.slice(WORLD_ENTRY_PREFIX.length).trim();
+        if (ownedQuery && hay.includes(ownedQuery.toLowerCase())) return true;
+    }
+    const keys = Array.isArray(entry.key) ? entry.key : [];
+    return keys.some((key) => isUsefulWorldKey(key) && hay.includes(String(key).toLowerCase()));
+}
+
+function coveringEntryInData(data, userText, query) {
+    const entries = data?.entries && typeof data.entries === "object" ? Object.values(data.entries) : [];
+    return entries.find((entry) => entryCoversText(entry, userText, query)) || null;
+}
+
+async function findWorldbookCoverage(userText, query, settings) {
+    if (settings.skipIfInWorldbook === false) return null;
+    const context = tryGetContext();
+    if (typeof context?.loadWorldInfo !== "function") return null;
+    const names = [];
+    const add = (name) => {
+        const text = String(name || "").trim();
+        if (text && !names.includes(text)) names.push(text);
+    };
+    add(resolveWorldbookName(context, settings));
+    add(characterPrimaryWorld(context));
+    for (const name of names) {
+        let data = null;
+        try {
+            data = await context.loadWorldInfo(name);
+        } catch {
+            data = null;
+        }
+        const entry = coveringEntryInData(data, userText, query);
+        if (entry) return { name, entry };
+    }
+    return null;
+}
+
 async function writeSearchToWorldbook(query, text, settings) {
     if (settings.writeToWorldbook === false) return "skip";
     const summary = String(text || "");
@@ -805,6 +864,18 @@ async function interceptGeneration(chat, _contextSize, _abort, type) {
         if (skippedOriginal) {
             setPrompt(buildPrompt("", settings, true));
             return;
+        }
+
+        if (!wantsFreshSearch(userText, settings)) {
+            try {
+                const coverage = await findWorldbookCoverage(userText, query, settings);
+                if (coverage) {
+                    clearPrompt();
+                    return;
+                }
+            } catch (error) {
+                console.warn("[" + MODULE_ID + "] worldbook coverage check failed", error);
+            }
         }
 
         if (shouldPreflight(userText, settings, skippedOriginal, wantSearch, query)) {
@@ -880,6 +951,7 @@ function fallbackSettingsHtml(hostLabel) {
         '      <label>Tavily API Key（可选，密钥只保存在本机扩展设置里）<input id="web-search-extension-tavily" class="text_pole" type="password" autocomplete="off"></label>',
         '      <label class="checkbox_label"><input id="web-search-extension-wb" type="checkbox"><span>写入世界书条目（找不到书就跳过，不新建书）</span></label>',
         '      <label>世界书名称（空=当前角色主世界书，没有则用已有的第一本）<input id="web-search-extension-wb-name" class="text_pole" type="text" placeholder="留空自动选择"></label>',
+        '      <label class="checkbox_label"><input id="web-search-extension-skip-wb" type="checkbox"><span>世界书已有则不再搜索（省 token）</span></label>',
         '      <label>最多引用条数<input id="web-search-extension-max" class="text_pole" type="number" min="1" max="12"></label>',
         '      <div class="web-search-extension__row">',
         '        <input id="web-search-extension-test-query" class="text_pole" type="text" placeholder="试搜关键词">',
@@ -923,6 +995,7 @@ function fillSettingsForm(root, settings) {
     assign("#web-search-extension-max", settings.maxItems);
     assign("#web-search-extension-wb", settings.writeToWorldbook !== false, true);
     assign("#web-search-extension-wb-name", settings.worldbookName || "");
+    assign("#web-search-extension-skip-wb", settings.skipIfInWorldbook !== false, true);
     const host = root.querySelector("[data-host]");
     if (host) host.textContent = detectHost();
 }
@@ -962,6 +1035,8 @@ function persistFromForm(root) {
     if (writeWb !== null) settings.writeToWorldbook = Boolean(writeWb);
     const wbName = read("#web-search-extension-wb-name");
     if (wbName !== null) settings.worldbookName = String(wbName || "");
+    const skipWb = read("#web-search-extension-skip-wb", true);
+    if (skipWb !== null) settings.skipIfInWorldbook = Boolean(skipWb);
     tryGetContext()?.saveSettingsDebounced?.();
     if (!settings.enabled) clearPrompt();
 }
@@ -1012,6 +1087,7 @@ async function mountSettings() {
         "#web-search-extension-max",
         "#web-search-extension-wb",
         "#web-search-extension-wb-name",
+        "#web-search-extension-skip-wb",
     ].forEach((selector) => bindField(uiRoot, selector, "change", onChange));
 
     bindField(uiRoot, "#web-search-extension-test", "click", async () => {
