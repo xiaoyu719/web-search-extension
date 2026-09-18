@@ -29,7 +29,11 @@ let uiRoot = null;
 let uiCleanup = null;
 
 function tryGetContext() {
-    return globalThis.SillyTavern?.getContext?.() ?? null;
+    try {
+        return globalThis.SillyTavern?.getContext?.() ?? null;
+    } catch {
+        return null;
+    }
 }
 
 function getContext() {
@@ -53,9 +57,9 @@ function initializeSettings() {
     if (!isObject(current)) {
         context.extensionSettings[MODULE_ID] = { ...DEFAULT_SETTINGS };
     } else {
-        const hadTriggerMode = Object.hasOwn(current, "triggerMode");
+        const hadTriggerMode = Object.prototype.hasOwnProperty.call(current, "triggerMode");
         for (const key of Object.keys(DEFAULT_SETTINGS)) {
-            if (!Object.hasOwn(current, key)) current[key] = DEFAULT_SETTINGS[key];
+            if (!Object.prototype.hasOwnProperty.call(current, key)) current[key] = DEFAULT_SETTINGS[key];
         }
         if (!hadTriggerMode) current.triggerMode = current.autoSearch ? "always" : "smart";
     }
@@ -753,14 +757,22 @@ export function onInstall() {
 }
 
 export function onActivate() {
-    initializeSettings();
-    scheduleBoot();
+    try {
+        initializeSettings();
+        scheduleBoot();
+    } catch (error) {
+        console.warn("[" + MODULE_ID + "] onActivate failed", error);
+    }
 }
 
 export function onEnable() {
-    initialized = false;
-    initializeSettings();
-    scheduleBoot();
+    try {
+        initialized = false;
+        initializeSettings();
+        scheduleBoot();
+    } catch (error) {
+        console.warn("[" + MODULE_ID + "] onEnable failed", error);
+    }
 }
 
 export function onDisable() {
@@ -787,5 +799,9 @@ export function onClean() {
     initialized = false;
 }
 
-globalThis.WebSearchExt_interceptGeneration = interceptGeneration;
-scheduleBoot();
+try {
+    globalThis.WebSearchExt_interceptGeneration = interceptGeneration;
+    scheduleBoot();
+} catch (error) {
+    console.warn("[" + MODULE_ID + "] boot failed", error);
+}

@@ -5,10 +5,9 @@
   "js": "index.js",
   "css": "style.css",
   "author": "xiaoyu719",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "homePage": "https://github.com/xiaoyu719/web-search-extension",
   "auto_update": false,
-  "minimum_client_version": "1.18.0",
   "generate_interceptor": "WebSearchExt_interceptGeneration",
   "hooks": {
     "install": "onInstall",
