@@ -15,6 +15,13 @@
       <label>同人/不可原创（命中就搜）<input id="web-search-extension-force" class="text_pole" type="text"></label>
       <label>原创/架空（命中就不搜）<input id="web-search-extension-skip" class="text_pole" type="text"></label>
       <label class="checkbox_label"><input id="web-search-extension-ai-request" type="checkbox"><span>生成正文前先让 AI 判断要不要搜（同人不能原创时会先搜再写）</span></label>
+      <label>搜索通道
+        <select id="web-search-extension-source" class="text_pole">
+          <option value="auto">先网页百科，失败再用主API（推荐）</option>
+          <option value="direct">只走网页百科</option>
+          <option value="mainApi">只跟随主API（用你正在聊的那套接口）</option>
+        </select>
+      </label>
       <label class="checkbox_label"><input id="web-search-extension-qiuwen" type="checkbox"><span>求闻百科（大陆综合百科，默认）</span></label>
       <label class="checkbox_label"><input id="web-search-extension-moegirl" type="checkbox"><span>萌娘百科（大陆二次元/同人资料，默认）</span></label>
       <label class="checkbox_label"><input id="web-search-extension-wiki-zh" type="checkbox"><span>维基百科中文（海外备用，大陆常连不上）</span></label>

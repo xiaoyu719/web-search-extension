@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     useDuckDuckGo: false,
     customSearchUrl: "",
     tavilyApiKey: "",
+    sourceMode: "auto",
     maxItems: 6,
 });
 
@@ -225,6 +226,7 @@ function parsePreflight(raw) {
 }
 
 let preflightBusy = false;
+let hostCallBusy = false;
 
 async function preflightSearchQuery(userText) {
     if (preflightBusy) return "";
@@ -452,18 +454,113 @@ function formatResults(query, items, notes) {
     return clipBlock(lines.join("\n"), MAX_PROMPT_CHARS);
 }
 
-async function runSearch(query, settings) {
-    const jobs = [];
-    if (settings.useQiuwen) jobs.push(["求闻百科", (signal) => searchQiuwen(query, signal)]);
-    if (settings.useMoegirl) jobs.push(["萌娘百科", (signal) => searchMoegirl(query, signal)]);
-    if (settings.useWikipediaZh) jobs.push(["维基百科中文", (signal) => searchWikipedia("zh", query, signal)]);
-    if (settings.useWikipediaEn) jobs.push(["Wikipedia", (signal) => searchWikipedia("en", query, signal)]);
-    if (settings.useDuckDuckGo) jobs.push(["DuckDuckGo", (signal) => searchDuckDuckGo(query, signal)]);
-    if (String(settings.customSearchUrl || "").trim()) {
-        jobs.push(["自定义搜索", (signal) => searchCustom(settings.customSearchUrl, query, signal)]);
+
+function getSourceMode(settings) {
+    const mode = String(settings?.sourceMode || "auto");
+    if (mode === "direct" || mode === "mainApi") return mode;
+    return "auto";
+}
+
+function parseMainApiResults(query, raw) {
+    const text = String(raw || "").replace(/```/g, "").trim();
+    if (!text || /^NO_RESULT\b/i.test(text)) return [];
+    const items = [];
+    for (const line of text.split(/[\n\r]+/)) {
+        const cleaned = line.replace(/^[-*]\s*/, "").trim();
+        if (!cleaned || /NO_RESULT/i.test(cleaned)) continue;
+        const parts = cleaned.split(/[?|]/).map((part) => part.trim()).filter(Boolean);
+        if (parts.length >= 2) {
+            items.push({
+                source: "\u4e3bAPI",
+                title: parts[0],
+                snippet: clipLine(parts.slice(1).join(" "), 220),
+                url: "",
+            });
+        }
+        if (items.length >= 6) break;
     }
-    if (String(settings.tavilyApiKey || "").trim()) {
-        jobs.push(["Tavily", (signal) => searchTavily(settings.tavilyApiKey, query, signal)]);
+    if (!items.length) {
+        items.push({
+            source: "\u4e3bAPI",
+            title: String(query || ""),
+            snippet: clipLine(text, 280),
+            url: "",
+        });
+    }
+    return items.filter((item) => item.title || item.snippet);
+}
+
+async function raceTimeout(promise, ms) {
+    let timer = 0;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error("\u8d85\u65f6")), ms);
+            }),
+        ]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function searchViaMainApi(query) {
+    const context = tryGetContext();
+    if (typeof context?.generateRaw !== "function" && typeof context?.generateQuietPrompt !== "function") {
+        throw new Error("\u5f53\u524d\u9152\u9986\u6ca1\u6709\u4e3bAPI\u8c03\u7528\u53e3");
+    }
+    const systemPrompt = [
+        "\u4f60\u53ea\u505a\u8d44\u6599\u5458\uff0c\u7edd\u5bf9\u4e0d\u8981\u5199\u6545\u4e8b\u3001\u5bf9\u767d\u6216\u63cf\u5199\u3002",
+        "\u82e5\u5f53\u524d\u63a5\u53e3\u80fd\u4e0a\u7f51\uff0c\u5148\u6309\u516c\u5f00\u8d44\u6599\u56de\u7b54\uff1b\u82e5\u4e0d\u80fd\u4e0a\u7f51\uff0c\u53ea\u5199\u4f60\u786e\u5b9a\u7684\u516c\u5f00\u5e38\u8bc6\uff0c\u4e0d\u786e\u5b9a\u5c31\u5199\u4e0d\u786e\u5b9a\u3002",
+        "\u7981\u6b62\u7f16\u9020\u5177\u4f53\u6bd4\u5206\u3001\u6392\u540d\u3001\u5f15\u8bed\u6216\u5b9e\u65f6\u65b0\u95fb\u3002",
+        "\u6bcf\u6761\u4e00\u884c\uff1a\u6807\u9898\uff5c\u6458\u8981",
+        "\u6ca1\u6709\u53ef\u7528\u4fe1\u606f\u53ea\u8f93\u51fa NO_RESULT",
+    ].join("\n");
+    const prompt = "\u68c0\u7d22\u8bcd\uff1a" + String(query || "").slice(0, 200);
+    hostCallBusy = true;
+    try {
+        let raw = "";
+        if (typeof context.generateRaw === "function") {
+            raw = await raceTimeout(context.generateRaw({
+                    prompt,
+                    systemPrompt,
+                    quietToLoud: false,
+                    instructOverride: true,
+                    responseLength: 360,
+                    trimNames: true,
+                }), 20000);
+        } else {
+            raw = await raceTimeout(context.generateQuietPrompt({
+                    quietPrompt: systemPrompt + "\n" + prompt,
+                    quietToLoud: false,
+                    skipWIAN: true,
+                    responseLength: 360,
+                    removeReasoning: true,
+                }), 20000);
+        }
+        const items = parseMainApiResults(query, raw);
+        if (!items.length) throw new Error("\u4e3bAPI\u65e0\u53ef\u7528\u6458\u8981");
+        return items;
+    } finally {
+        hostCallBusy = false;
+    }
+}
+
+async function runSearch(query, settings) {
+    const sourceMode = getSourceMode(settings);
+    const jobs = [];
+    if (sourceMode !== "mainApi") {
+        if (settings.useQiuwen) jobs.push(["\u6c42\u95fb\u767e\u79d1", (signal) => searchQiuwen(query, signal)]);
+        if (settings.useMoegirl) jobs.push(["\u840c\u5a18\u767e\u79d1", (signal) => searchMoegirl(query, signal)]);
+        if (settings.useWikipediaZh) jobs.push(["\u7ef4\u57fa\u767e\u79d1\u4e2d\u6587", (signal) => searchWikipedia("zh", query, signal)]);
+        if (settings.useWikipediaEn) jobs.push(["Wikipedia", (signal) => searchWikipedia("en", query, signal)]);
+        if (settings.useDuckDuckGo) jobs.push(["DuckDuckGo", (signal) => searchDuckDuckGo(query, signal)]);
+        if (String(settings.customSearchUrl || "").trim()) {
+            jobs.push(["\u81ea\u5b9a\u4e49\u641c\u7d22", (signal) => searchCustom(settings.customSearchUrl, query, signal)]);
+        }
+        if (String(settings.tavilyApiKey || "").trim()) {
+            jobs.push(["Tavily", (signal) => searchTavily(settings.tavilyApiKey, query, signal)]);
+        }
     }
 
     const items = [];
@@ -479,16 +576,31 @@ async function runSearch(query, settings) {
                 items.push(item);
             }
         } catch (error) {
-            const message = error?.name === "AbortError" ? "超时" : (error?.message || String(error));
-            notes.push(label + "失败：" + message);
+            const message = error?.name === "AbortError" ? "\u8d85\u65f6" : (error?.message || String(error));
+            notes.push(label + "\u5931\u8d25\uff1a" + message);
         } finally {
             clock.done();
         }
     }));
 
-    if (!jobs.length) notes.push("未启用任何搜索源");
+    const needMainApi = sourceMode === "mainApi" || (sourceMode === "auto" && items.length === 0);
+    if (needMainApi) {
+        try {
+            const found = await searchViaMainApi(query);
+            for (const item of found) {
+                if (items.length >= maxItems) break;
+                items.push(item);
+            }
+            notes.push("\u4e3bAPI\u8d70\u4f60\u6b63\u5728\u7528\u7684\u804a\u5929\u63a5\u53e3\uff0c\u4e0d\u662f\u7f51\u9875\u6293\u53d6\u3002\u6a21\u578b\u82e5\u4e0d\u80fd\u4e0a\u7f51\uff0c\u5185\u5bb9\u53ef\u80fd\u4e0d\u662f\u5b9e\u65f6\u7f51\u9875\u8d44\u6599\u3002");
+        } catch (error) {
+            notes.push("\u4e3bAPI\u5931\u8d25\uff1a" + (error?.message || error));
+        }
+    }
+
+    if (!jobs.length && sourceMode !== "mainApi") notes.push("\u672a\u542f\u7528\u4efb\u4f55\u641c\u7d22\u6e90");
     return formatResults(query, items, notes);
 }
+
 
 function setPrompt(text) {
     const context = tryGetContext();
@@ -513,6 +625,7 @@ async function interceptGeneration(chat, _contextSize, _abort, type) {
             clearPrompt();
             return;
         }
+        if (hostCallBusy) return;
         if (type === "quiet" || type === "impersonate") return;
 
         const userText = lastUserText(chat);
@@ -581,6 +694,7 @@ function fallbackSettingsHtml(hostLabel) {
         '      <label>同人/不可原创（命中就搜）<input id="web-search-extension-force" class="text_pole" type="text"></label>',
         '      <label>原创/架空（命中就不搜）<input id="web-search-extension-skip" class="text_pole" type="text"></label>',
         '      <label class="checkbox_label"><input id="web-search-extension-ai-request" type="checkbox"><span>生成正文前先让 AI 判断要不要搜（同人不能原创时会先搜再写）</span></label>',
+        '      <label>搜索通道<select id="web-search-extension-source" class="text_pole"><option value="auto">先网页百科，失败再用主API（推荐）</option><option value="direct">只走网页百科</option><option value="mainApi">只跟随主API（用你正在聊的那套接口）</option></select></label>',
         '      <label class="checkbox_label"><input id="web-search-extension-qiuwen" type="checkbox"><span>求闻百科（大陆综合百科，默认）</span></label>',
         '      <label class="checkbox_label"><input id="web-search-extension-moegirl" type="checkbox"><span>萌娘百科（大陆二次元/同人资料，默认）</span></label>',
         '      <label class="checkbox_label"><input id="web-search-extension-wiki-zh" type="checkbox"><span>维基百科中文（海外备用，大陆常连不上）</span></label>',
@@ -620,6 +734,7 @@ function fillSettingsForm(root, settings) {
     assign("#web-search-extension-force", settings.forceKeywords);
     assign("#web-search-extension-skip", settings.skipKeywords);
     assign("#web-search-extension-ai-request", settings.allowAiRequest !== false, true);
+    assign("#web-search-extension-source", getSourceMode(settings));
     assign("#web-search-extension-qiuwen", settings.useQiuwen !== false, true);
     assign("#web-search-extension-moegirl", settings.useMoegirl !== false, true);
     assign("#web-search-extension-wiki-zh", settings.useWikipediaZh, true);
@@ -647,6 +762,10 @@ function persistFromForm(root) {
     settings.forceKeywords = String(read("#web-search-extension-force") ?? DEFAULT_SETTINGS.forceKeywords);
     settings.skipKeywords = String(read("#web-search-extension-skip") ?? DEFAULT_SETTINGS.skipKeywords);
     settings.allowAiRequest = Boolean(read("#web-search-extension-ai-request", true));
+    const sourceMode = read("#web-search-extension-source");
+    if (sourceMode !== null) {
+        settings.sourceMode = (sourceMode === "direct" || sourceMode === "mainApi") ? sourceMode : "auto";
+    }
     const persistBox = (selector, key) => {
         const value = read(selector, true);
         if (value !== null) settings[key] = Boolean(value);
@@ -703,6 +822,7 @@ async function mountSettings() {
         "#web-search-extension-force",
         "#web-search-extension-skip",
         "#web-search-extension-ai-request",
+        "#web-search-extension-source",
         "#web-search-extension-custom",
         "#web-search-extension-tavily",
         "#web-search-extension-max",
