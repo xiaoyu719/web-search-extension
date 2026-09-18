@@ -22,15 +22,14 @@ const DEFAULT_SETTINGS = Object.freeze({
     customSearchUrl: "",
     tavilyApiKey: "",
     sourceMode: "auto",
-    writeToDatabase: true,
-    databaseTable: "\u68c0\u7d22\u8865\u5145",
-    databaseColumn: "\u8865\u5145\u680f",
+    writeToWorldbook: true,
+    worldbookName: "",
     maxItems: 6,
 });
 
 const searchCache = { chatId: "", query: "", text: "" };
 let initialized = false;
-let lastDatabaseWriteStatus = "";
+let lastWorldbookWriteStatus = "";
 let slashRegistered = false;
 let uiRoot = null;
 let uiCleanup = null;
@@ -76,6 +75,12 @@ function initializeSettings() {
             current.useWikipediaZh = false;
             current.useWikipediaEn = false;
             current.useDuckDuckGo = false;
+        }
+        if (!Object.prototype.hasOwnProperty.call(current, "writeToWorldbook")) {
+            current.writeToWorldbook = current.writeToDatabase !== false;
+        }
+        if (!Object.prototype.hasOwnProperty.call(current, "worldbookName")) {
+            current.worldbookName = "";
         }
     }
     context.saveSettingsDebounced?.();
@@ -607,77 +612,157 @@ async function runSearch(query, settings) {
 
 
 
-function getDatabaseApi() {
-    const hosts = [globalThis, globalThis.window, globalThis.parent];
-    for (const host of hosts) {
-        const api = host?.AutoCardUpdaterAPI;
-        if (api && typeof api.insertRow === "function" && typeof api.exportTableAsJson === "function") return api;
+const WORLD_ENTRY_PREFIX = "[联网搜索]";
+
+function listWorldInfoNames(context) {
+    if (typeof context?.getWorldInfoNames === "function") {
+        const names = context.getWorldInfoNames();
+        if (Array.isArray(names)) return names.map((name) => String(name || "").trim()).filter(Boolean);
     }
-    return null;
+    return [];
 }
 
-function findSheetByName(tableData, tableName) {
-    const wanted = String(tableName || "").trim();
-    if (!wanted || !tableData || typeof tableData !== "object") return null;
-    for (const value of Object.values(tableData)) {
-        if (value && typeof value === "object" && String(value.name || "").trim() === wanted) return value;
-    }
-    return null;
+function characterPrimaryWorld(context) {
+    const chid = context?.characterId;
+    const characters = Array.isArray(context?.characters) ? context.characters : [];
+    const character = characters[chid] ?? characters[Number(chid)] ?? null;
+    return String(character?.data?.extensions?.world || "").trim();
 }
 
-function pickHeader(headers, aliases) {
-    const list = Array.isArray(headers) ? headers.map((item) => String(item || "").trim()) : [];
-    for (const alias of aliases) {
-        const found = list.find((header) => header === alias);
-        if (found) return found;
+function resolveWorldbookName(context, settings) {
+    const names = listWorldInfoNames(context);
+    const wanted = String(settings.worldbookName || "").trim();
+    if (wanted) {
+        const exact = names.find((name) => name === wanted);
+        if (exact) return exact;
+        const ignoreCase = names.find((name) => name.toLowerCase() === wanted.toLowerCase());
+        if (ignoreCase) return ignoreCase;
+        return wanted;
     }
+    const primary = characterPrimaryWorld(context);
+    if (primary) return primary;
+    if (names.length) return names[0];
     return "";
 }
 
-function buildDatabaseRow(headers, query, text, settings) {
-    const extraName = pickHeader(headers, [
-        String(settings.databaseColumn || "").trim(),
-        "\u8865\u5145\u680f",
-        "\u8865\u5145",
-        "\u5907\u6ce8",
-        "\u6458\u8981",
-        "\u5185\u5bb9",
-    ].filter(Boolean));
-    const queryName = pickHeader(headers, ["\u68c0\u7d22\u8bcd", "\u5173\u952e\u8bcd", "\u67e5\u8be2", "\u6807\u9898"]);
-    const sourceName = pickHeader(headers, ["\u6765\u6e90"]);
-    const timeName = pickHeader(headers, ["\u65f6\u95f4", "\u66f4\u65b0\u65f6\u95f4"]);
-    if (!extraName) return null;
-    const row = {};
-    row[extraName] = clipLine(text, 300);
-    if (queryName) row[queryName] = clipLine(query, 80);
-    if (sourceName) row[sourceName] = "\u8054\u7f51\u641c\u7d22";
-    if (timeName) row[timeName] = new Date().toISOString().slice(0, 16).replace("T", " ");
-    return row;
+function ownedSearchComment(query) {
+    return WORLD_ENTRY_PREFIX + " " + String(query || "").trim();
 }
 
-async function writeSearchToDatabase(query, text, settings) {
-    if (settings.writeToDatabase === false) return "skip";
-    const summary = String(text || "");
-    if (!summary || summary.indexOf("\u6ca1\u6709\u62ff\u5230\u53ef\u7528\u6458\u8981") >= 0) return "empty";
-    const api = getDatabaseApi();
-    if (!api) return "no-api";
-    let tableData = {};
-    try {
-        tableData = typeof structuredClone === "function"
-            ? structuredClone(api.exportTableAsJson() ?? {})
-            : JSON.parse(JSON.stringify(api.exportTableAsJson() ?? {}));
-    } catch {
-        return "unready";
+function isOwnedSearchEntry(entry) {
+    return Boolean(entry) && String(entry.comment || "").startsWith(WORLD_ENTRY_PREFIX);
+}
+
+function findOwnedSearchEntry(entries, query) {
+    const wanted = ownedSearchComment(query);
+    const list = Object.values(entries || {});
+    return list.find((entry) => isOwnedSearchEntry(entry) && String(entry.comment || "") === wanted)
+        || list.find((entry) => isOwnedSearchEntry(entry) && Array.isArray(entry.key) && entry.key.includes(query))
+        || null;
+}
+
+function getFreeWorldEntryUid(data) {
+    const entries = data?.entries;
+    const used = new Set();
+    if (entries && typeof entries === "object") {
+        for (const key of Object.keys(entries)) {
+            const uid = Number(key);
+            if (Number.isInteger(uid)) used.add(uid);
+        }
     }
-    const tableName = String(settings.databaseTable || "\u68c0\u7d22\u8865\u5145").trim() || "\u68c0\u7d22\u8865\u5145";
-    const sheet = findSheetByName(tableData, tableName);
-    if (!sheet) return "no-table";
-    const headers = Array.isArray(sheet.content) ? sheet.content[0] : [];
-    const row = buildDatabaseRow(headers, query, summary, settings);
-    if (!row) return "no-column";
-    const index = await api.insertRow(tableName, row);
-    if (index === -1 || index === false || index == null) return "insert-failed";
-    return "ok";
+    let uid = 0;
+    while (used.has(uid)) uid += 1;
+    return uid;
+}
+
+function buildWorldKeys(query) {
+    const keys = [];
+    const add = (value) => {
+        const text = String(value || "").trim();
+        if (!text || keys.includes(text) || keys.length >= 8) return;
+        keys.push(text);
+    };
+    add(query);
+    String(query || "").split(/[\s,，、/|]+/).forEach(add);
+    return keys.length ? keys : [String(query || "搜索").trim()];
+}
+
+function createOwnedSearchEntry(data, query, content) {
+    const uid = getFreeWorldEntryUid(data);
+    const entry = {
+        uid,
+        key: buildWorldKeys(query),
+        keysecondary: [],
+        comment: ownedSearchComment(query),
+        content,
+        constant: false,
+        vectorized: false,
+        selective: true,
+        selectiveLogic: 0,
+        addMemo: true,
+        order: 100,
+        position: 0,
+        disable: false,
+        ignoreBudget: false,
+        excludeRecursion: true,
+        preventRecursion: true,
+        matchPersonaDescription: false,
+        matchCharacterDescription: false,
+        matchCharacterPersonality: false,
+        matchCharacterDepthPrompt: false,
+        matchScenario: false,
+        matchCreatorNotes: false,
+        delayUntilRecursion: 0,
+        probability: 100,
+        useProbability: true,
+        depth: 4,
+        outletName: "",
+        group: "",
+        groupOverride: false,
+        groupWeight: 100,
+        scanDepth: null,
+        caseSensitive: null,
+        matchWholeWords: null,
+        useGroupScoring: null,
+        automationId: "",
+        role: 0,
+        sticky: null,
+        cooldown: null,
+        delay: null,
+        triggers: [],
+    };
+    data.entries[uid] = entry;
+    return entry;
+}
+
+async function writeSearchToWorldbook(query, text, settings) {
+    if (settings.writeToWorldbook === false) return "skip";
+    const summary = String(text || "");
+    if (!summary || summary.indexOf("没有拿到可用摘要") >= 0) return "empty";
+    const context = tryGetContext();
+    if (typeof context?.loadWorldInfo !== "function" || typeof context?.saveWorldInfo !== "function") return "no-api";
+    const name = resolveWorldbookName(context, settings);
+    if (!name) return "no-book";
+    const data = await context.loadWorldInfo(name);
+    if (!data || typeof data !== "object") return "load-failed";
+    if (!data.entries || typeof data.entries !== "object") data.entries = {};
+    const existing = findOwnedSearchEntry(data.entries, query);
+    if (existing) {
+        existing.key = buildWorldKeys(query);
+        existing.content = summary;
+        existing.comment = ownedSearchComment(query);
+        existing.disable = false;
+        existing.addMemo = true;
+    } else {
+        createOwnedSearchEntry(data, query, summary);
+    }
+    await context.saveWorldInfo(name, data, true);
+    try {
+        context.reloadWorldInfoEditor?.(name);
+    } catch {
+        // Editor refresh is optional; save already persisted the entry.
+    }
+    return "ok:" + name;
 }
 
 function setPrompt(text) {
@@ -754,17 +839,17 @@ async function interceptGeneration(chat, _contextSize, _abort, type) {
         searchCache.text = text;
         setPrompt(buildPrompt(text, settings, false));
         try {
-            const dbStatus = await writeSearchToDatabase(query, text, settings);
-            if (dbStatus !== "ok" && dbStatus !== "skip" && dbStatus !== "empty" && dbStatus !== "no-api") {
-                if (lastDatabaseWriteStatus !== dbStatus) {
-                    lastDatabaseWriteStatus = dbStatus;
-                    console.warn("[" + MODULE_ID + "] database write: " + dbStatus);
+            const worldStatus = await writeSearchToWorldbook(query, text, settings);
+            if (worldStatus !== "skip" && worldStatus !== "empty" && worldStatus !== "no-api" && !String(worldStatus).startsWith("ok")) {
+                if (lastWorldbookWriteStatus !== worldStatus) {
+                    lastWorldbookWriteStatus = worldStatus;
+                    console.warn("[" + MODULE_ID + "] worldbook write: " + worldStatus);
                 }
-            } else if (dbStatus === "ok") {
-                lastDatabaseWriteStatus = "ok";
+            } else if (String(worldStatus).startsWith("ok")) {
+                lastWorldbookWriteStatus = worldStatus;
             }
         } catch (error) {
-            console.warn("[" + MODULE_ID + "] database write failed", error);
+            console.warn("[" + MODULE_ID + "] worldbook write failed", error);
         }
     } catch (error) {
         console.warn("[" + MODULE_ID + "] intercept failed", error);
@@ -793,9 +878,8 @@ function fallbackSettingsHtml(hostLabel) {
         '      <label class="checkbox_label"><input id="web-search-extension-ddg" type="checkbox"><span>DuckDuckGo 即时答案（海外，常被拦住）</span></label>',
         '      <label>自定义搜索地址（用 {{query}} 占位，可填自建 SearXNG/代理）<input id="web-search-extension-custom" class="text_pole" type="text" placeholder="https://example.com/search?q={{query}}"></label>',
         '      <label>Tavily API Key（可选，密钥只保存在本机扩展设置里）<input id="web-search-extension-tavily" class="text_pole" type="password" autocomplete="off"></label>',
-        '      <label class="checkbox_label"><input id="web-search-extension-db" type="checkbox"><span>写入神/数据库补充栏（没装就跳过）</span></label>',
-        '      <label>数据库表名<input id="web-search-extension-db-table" class="text_pole" type="text"></label>',
-        '      <label>补充栏列名<input id="web-search-extension-db-col" class="text_pole" type="text"></label>',
+        '      <label class="checkbox_label"><input id="web-search-extension-wb" type="checkbox"><span>写入世界书条目（找不到书就跳过，不新建书）</span></label>',
+        '      <label>世界书名称（空=当前角色主世界书，没有则用已有的第一本）<input id="web-search-extension-wb-name" class="text_pole" type="text" placeholder="留空自动选择"></label>',
         '      <label>最多引用条数<input id="web-search-extension-max" class="text_pole" type="number" min="1" max="12"></label>',
         '      <div class="web-search-extension__row">',
         '        <input id="web-search-extension-test-query" class="text_pole" type="text" placeholder="试搜关键词">',
@@ -837,9 +921,8 @@ function fillSettingsForm(root, settings) {
     assign("#web-search-extension-custom", settings.customSearchUrl);
     assign("#web-search-extension-tavily", settings.tavilyApiKey);
     assign("#web-search-extension-max", settings.maxItems);
-    assign("#web-search-extension-db", settings.writeToDatabase !== false, true);
-    assign("#web-search-extension-db-table", settings.databaseTable || "检索补充");
-    assign("#web-search-extension-db-col", settings.databaseColumn || "补充栏");
+    assign("#web-search-extension-wb", settings.writeToWorldbook !== false, true);
+    assign("#web-search-extension-wb-name", settings.worldbookName || "");
     const host = root.querySelector("[data-host]");
     if (host) host.textContent = detectHost();
 }
@@ -875,12 +958,10 @@ function persistFromForm(root) {
     settings.customSearchUrl = String(read("#web-search-extension-custom") ?? "");
     settings.tavilyApiKey = String(read("#web-search-extension-tavily") ?? "");
     settings.maxItems = Math.max(1, Number(read("#web-search-extension-max")) || 6);
-    const writeDb = read("#web-search-extension-db", true);
-    if (writeDb !== null) settings.writeToDatabase = Boolean(writeDb);
-    const dbTable = read("#web-search-extension-db-table");
-    if (dbTable !== null) settings.databaseTable = String(dbTable || "检索补充");
-    const dbCol = read("#web-search-extension-db-col");
-    if (dbCol !== null) settings.databaseColumn = String(dbCol || "补充栏");
+    const writeWb = read("#web-search-extension-wb", true);
+    if (writeWb !== null) settings.writeToWorldbook = Boolean(writeWb);
+    const wbName = read("#web-search-extension-wb-name");
+    if (wbName !== null) settings.worldbookName = String(wbName || "");
     tryGetContext()?.saveSettingsDebounced?.();
     if (!settings.enabled) clearPrompt();
 }
@@ -929,9 +1010,8 @@ async function mountSettings() {
         "#web-search-extension-custom",
         "#web-search-extension-tavily",
         "#web-search-extension-max",
-        "#web-search-extension-db",
-        "#web-search-extension-db-table",
-        "#web-search-extension-db-col",
+        "#web-search-extension-wb",
+        "#web-search-extension-wb-name",
     ].forEach((selector) => bindField(uiRoot, selector, "change", onChange));
 
     bindField(uiRoot, "#web-search-extension-test", "click", async () => {

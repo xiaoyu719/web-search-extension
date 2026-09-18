@@ -27,6 +27,20 @@
       "fallback": "斜杠命令 /websearch 不注册，仍可用关键词触发和设置页试搜"
     },
     {
+      "id": "world-info-write",
+      "owner": "sillytavern",
+      "symbol": "SillyTavern.getContext().loadWorldInfo",
+      "required": false,
+      "fallback": "宿主没有世界书读写接口时跳过写入，搜索和提示词注入仍可用"
+    },
+    {
+      "id": "world-info-save",
+      "owner": "sillytavern",
+      "symbol": "SillyTavern.getContext().saveWorldInfo",
+      "required": false,
+      "fallback": "宿主没有世界书保存接口时跳过写入，搜索和提示词注入仍可用"
+    },
+    {
       "id": "tauritavern-global",
       "owner": "provider",
       "symbol": "window.__TAURITAVERN__",
