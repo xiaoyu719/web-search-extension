@@ -15,9 +15,11 @@
       <label>同人/不可原创（命中就搜）<input id="web-search-extension-force" class="text_pole" type="text"></label>
       <label>原创/架空（命中就不搜）<input id="web-search-extension-skip" class="text_pole" type="text"></label>
       <label class="checkbox_label"><input id="web-search-extension-ai-request" type="checkbox"><span>生成正文前先让 AI 判断要不要搜（同人不能原创时会先搜再写）</span></label>
-      <label class="checkbox_label"><input id="web-search-extension-wiki-zh" type="checkbox"><span>维基百科中文（适合跨域）</span></label>
-      <label class="checkbox_label"><input id="web-search-extension-wiki-en" type="checkbox"><span>Wikipedia 英文（适合跨域）</span></label>
-      <label class="checkbox_label"><input id="web-search-extension-ddg" type="checkbox"><span>DuckDuckGo 即时答案（可能被跨域拦住）</span></label>
+      <label class="checkbox_label"><input id="web-search-extension-qiuwen" type="checkbox"><span>求闻百科（大陆综合百科，默认）</span></label>
+      <label class="checkbox_label"><input id="web-search-extension-moegirl" type="checkbox"><span>萌娘百科（大陆二次元/同人资料，默认）</span></label>
+      <label class="checkbox_label"><input id="web-search-extension-wiki-zh" type="checkbox"><span>维基百科中文（海外备用，大陆常连不上）</span></label>
+      <label class="checkbox_label"><input id="web-search-extension-wiki-en" type="checkbox"><span>Wikipedia 英文（海外备用，大陆常连不上）</span></label>
+      <label class="checkbox_label"><input id="web-search-extension-ddg" type="checkbox"><span>DuckDuckGo 即时答案（海外，常被拦住）</span></label>
       <label>自定义搜索地址（把关键词写成两个大括号包住 query）<input id="web-search-extension-custom" class="text_pole" type="text" placeholder="https://example.com/search?q=QUERY"></label>
       <label>Tavily API Key（可选，密钥只保存在本机扩展设置里）<input id="web-search-extension-tavily" class="text_pole" type="password" autocomplete="off"></label>
       <label>最多引用条数<input id="web-search-extension-max" class="text_pole" type="number" min="1" max="12"></label>
@@ -26,7 +28,7 @@
         <button id="web-search-extension-test" class="menu_button" type="button">试搜</button>
       </div>
       <pre id="web-search-extension-status" class="web-search-extension__status">尚未试搜。文件检查不等于已经装进酒馆。</pre>
-      <p class="web-search-extension__hint">检索发生在正文出现之前。同人/不能原创时会先安静判断、先搜索，再写故事。打开判断开关后，回复会稍慢。</p>
+      <p class="web-search-extension__hint">检索发生在正文出现之前。大陆请优先用求闻百科/萌娘百科；维基百科和 DuckDuckGo 在大陆常连不上，勾上后可能空等几秒。</p>
     </div>
   </details>
 </div>

@@ -14,9 +14,11 @@ const DEFAULT_SETTINGS = Object.freeze({
     forceKeywords: "同人,原作,官方设定,真人真事,不要编,别瞎编,不能原创,不可原创,按真实,以现实为准,按官方,查准,符合原作",
     skipKeywords: "原创,架空,OC,纯属虚构,编一个,随便编",
     allowAiRequest: true,
-    useWikipediaZh: true,
-    useWikipediaEn: true,
-    useDuckDuckGo: true,
+    useQiuwen: true,
+    useMoegirl: true,
+    useWikipediaZh: false,
+    useWikipediaEn: false,
+    useDuckDuckGo: false,
     customSearchUrl: "",
     tavilyApiKey: "",
     maxItems: 6,
@@ -58,10 +60,18 @@ function initializeSettings() {
         context.extensionSettings[MODULE_ID] = { ...DEFAULT_SETTINGS };
     } else {
         const hadTriggerMode = Object.prototype.hasOwnProperty.call(current, "triggerMode");
+        const hadQiuwen = Object.prototype.hasOwnProperty.call(current, "useQiuwen");
         for (const key of Object.keys(DEFAULT_SETTINGS)) {
             if (!Object.prototype.hasOwnProperty.call(current, key)) current[key] = DEFAULT_SETTINGS[key];
         }
         if (!hadTriggerMode) current.triggerMode = current.autoSearch ? "always" : "smart";
+        if (!hadQiuwen) {
+            current.useQiuwen = true;
+            current.useMoegirl = true;
+            current.useWikipediaZh = false;
+            current.useWikipediaEn = false;
+            current.useDuckDuckGo = false;
+        }
     }
     context.saveSettingsDebounced?.();
     return context.extensionSettings[MODULE_ID];
@@ -287,21 +297,68 @@ async function readJson(response) {
 }
 
 
-async function searchWikipedia(lang, query, signal) {
-    const host = lang === "zh" ? "zh.wikipedia.org" : "en.wikipedia.org";
-    const url = "https://" + host + "/w/api.php?action=opensearch&search=" + encodeURIComponent(query) + "&limit=5&namespace=0&format=json&origin=*";
-    const response = await fetch(url, { signal });
-    if (!response.ok) throw new Error("Wikipedia " + lang + " HTTP " + response.status);
+function clipExtract(text) {
+    return clipLine(String(text || "").replace(/\s+/g, " ").trim(), 220);
+}
+
+async function searchMediaWiki(source, query, signal) {
+    const api = "https://" + source.host + source.apiPath;
+    const searchUrl = api + "?action=opensearch&search=" + encodeURIComponent(query) + "&limit=5&namespace=0&format=json&origin=*";
+    const response = await fetch(searchUrl, { signal });
+    if (!response.ok) throw new Error(source.label + " HTTP " + response.status);
     const data = await response.json();
     const titles = Array.isArray(data?.[1]) ? data[1] : [];
     const snippets = Array.isArray(data?.[2]) ? data[2] : [];
     const links = Array.isArray(data?.[3]) ? data[3] : [];
-    return titles.map((title, index) => ({
-        source: lang === "zh" ? "维基百科中文" : "Wikipedia",
+    const items = titles.map((title, index) => ({
+        source: source.label,
         title: String(title || ""),
-        snippet: String(snippets[index] || ""),
+        snippet: clipExtract(snippets[index]),
         url: String(links[index] || ""),
     })).filter((item) => item.title);
+    if (!items.length) throw new Error(source.label + " 无结果");
+
+    const missing = items.filter((item) => !item.snippet).slice(0, 5);
+    if (!missing.length) return items;
+
+    const extractUrl = api + "?action=query&prop=extracts&exintro=1&explaintext=1&exchars=220&titles=" + encodeURIComponent(missing.map((item) => item.title).join("|")) + "&origin=*&format=json";
+    const extractResponse = await fetch(extractUrl, { signal });
+    if (!extractResponse.ok) return items;
+    const extractData = await extractResponse.json();
+    const pages = extractData?.query?.pages || {};
+    const byTitle = {};
+    for (const page of Object.values(pages)) {
+        if (page?.title) byTitle[page.title] = clipExtract(page.extract);
+    }
+    for (const item of items) {
+        if (!item.snippet && byTitle[item.title]) item.snippet = byTitle[item.title];
+    }
+    return items;
+}
+
+function searchWikipedia(lang, query, signal) {
+    const zh = lang === "zh";
+    return searchMediaWiki({
+        host: zh ? "zh.wikipedia.org" : "en.wikipedia.org",
+        apiPath: "/w/api.php",
+        label: zh ? "维基百科中文" : "Wikipedia",
+    }, query, signal);
+}
+
+function searchQiuwen(query, signal) {
+    return searchMediaWiki({
+        host: "www.qiuwenbaike.cn",
+        apiPath: "/api.php",
+        label: "求闻百科",
+    }, query, signal);
+}
+
+function searchMoegirl(query, signal) {
+    return searchMediaWiki({
+        host: "zh.moegirl.org.cn",
+        apiPath: "/api.php",
+        label: "萌娘百科",
+    }, query, signal);
 }
 
 function flattenRelated(topics, bucket) {
@@ -397,6 +454,8 @@ function formatResults(query, items, notes) {
 
 async function runSearch(query, settings) {
     const jobs = [];
+    if (settings.useQiuwen) jobs.push(["求闻百科", (signal) => searchQiuwen(query, signal)]);
+    if (settings.useMoegirl) jobs.push(["萌娘百科", (signal) => searchMoegirl(query, signal)]);
     if (settings.useWikipediaZh) jobs.push(["维基百科中文", (signal) => searchWikipedia("zh", query, signal)]);
     if (settings.useWikipediaEn) jobs.push(["Wikipedia", (signal) => searchWikipedia("en", query, signal)]);
     if (settings.useDuckDuckGo) jobs.push(["DuckDuckGo", (signal) => searchDuckDuckGo(query, signal)]);
@@ -522,9 +581,11 @@ function fallbackSettingsHtml(hostLabel) {
         '      <label>同人/不可原创（命中就搜）<input id="web-search-extension-force" class="text_pole" type="text"></label>',
         '      <label>原创/架空（命中就不搜）<input id="web-search-extension-skip" class="text_pole" type="text"></label>',
         '      <label class="checkbox_label"><input id="web-search-extension-ai-request" type="checkbox"><span>生成正文前先让 AI 判断要不要搜（同人不能原创时会先搜再写）</span></label>',
-        '      <label class="checkbox_label"><input id="web-search-extension-wiki-zh" type="checkbox"><span>维基百科中文（适合跨域）</span></label>',
-        '      <label class="checkbox_label"><input id="web-search-extension-wiki-en" type="checkbox"><span>Wikipedia 英文（适合跨域）</span></label>',
-        '      <label class="checkbox_label"><input id="web-search-extension-ddg" type="checkbox"><span>DuckDuckGo 即时答案（可能被跨域拦住）</span></label>',
+        '      <label class="checkbox_label"><input id="web-search-extension-qiuwen" type="checkbox"><span>求闻百科（大陆综合百科，默认）</span></label>',
+        '      <label class="checkbox_label"><input id="web-search-extension-moegirl" type="checkbox"><span>萌娘百科（大陆二次元/同人资料，默认）</span></label>',
+        '      <label class="checkbox_label"><input id="web-search-extension-wiki-zh" type="checkbox"><span>维基百科中文（海外备用，大陆常连不上）</span></label>',
+        '      <label class="checkbox_label"><input id="web-search-extension-wiki-en" type="checkbox"><span>Wikipedia 英文（海外备用，大陆常连不上）</span></label>',
+        '      <label class="checkbox_label"><input id="web-search-extension-ddg" type="checkbox"><span>DuckDuckGo 即时答案（海外，常被拦住）</span></label>',
         '      <label>自定义搜索地址（用 {{query}} 占位，可填自建 SearXNG/代理）<input id="web-search-extension-custom" class="text_pole" type="text" placeholder="https://example.com/search?q={{query}}"></label>',
         '      <label>Tavily API Key（可选，密钥只保存在本机扩展设置里）<input id="web-search-extension-tavily" class="text_pole" type="password" autocomplete="off"></label>',
         '      <label>最多引用条数<input id="web-search-extension-max" class="text_pole" type="number" min="1" max="12"></label>',
@@ -559,6 +620,8 @@ function fillSettingsForm(root, settings) {
     assign("#web-search-extension-force", settings.forceKeywords);
     assign("#web-search-extension-skip", settings.skipKeywords);
     assign("#web-search-extension-ai-request", settings.allowAiRequest !== false, true);
+    assign("#web-search-extension-qiuwen", settings.useQiuwen !== false, true);
+    assign("#web-search-extension-moegirl", settings.useMoegirl !== false, true);
     assign("#web-search-extension-wiki-zh", settings.useWikipediaZh, true);
     assign("#web-search-extension-wiki-en", settings.useWikipediaEn, true);
     assign("#web-search-extension-ddg", settings.useDuckDuckGo, true);
@@ -584,9 +647,15 @@ function persistFromForm(root) {
     settings.forceKeywords = String(read("#web-search-extension-force") ?? DEFAULT_SETTINGS.forceKeywords);
     settings.skipKeywords = String(read("#web-search-extension-skip") ?? DEFAULT_SETTINGS.skipKeywords);
     settings.allowAiRequest = Boolean(read("#web-search-extension-ai-request", true));
-    settings.useWikipediaZh = Boolean(read("#web-search-extension-wiki-zh", true));
-    settings.useWikipediaEn = Boolean(read("#web-search-extension-wiki-en", true));
-    settings.useDuckDuckGo = Boolean(read("#web-search-extension-ddg", true));
+    const persistBox = (selector, key) => {
+        const value = read(selector, true);
+        if (value !== null) settings[key] = Boolean(value);
+    };
+    persistBox("#web-search-extension-qiuwen", "useQiuwen");
+    persistBox("#web-search-extension-moegirl", "useMoegirl");
+    persistBox("#web-search-extension-wiki-zh", "useWikipediaZh");
+    persistBox("#web-search-extension-wiki-en", "useWikipediaEn");
+    persistBox("#web-search-extension-ddg", "useDuckDuckGo");
     settings.customSearchUrl = String(read("#web-search-extension-custom") ?? "");
     settings.tavilyApiKey = String(read("#web-search-extension-tavily") ?? "");
     settings.maxItems = Math.max(1, Number(read("#web-search-extension-max")) || 6);
@@ -625,6 +694,8 @@ async function mountSettings() {
     [
         "#web-search-extension-enabled",
         "#web-search-extension-mode",
+        "#web-search-extension-qiuwen",
+        "#web-search-extension-moegirl",
         "#web-search-extension-wiki-zh",
         "#web-search-extension-wiki-en",
         "#web-search-extension-ddg",
